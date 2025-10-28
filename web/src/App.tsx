@@ -1,4 +1,4 @@
-import {Channel} from './Channel';
+import {Channel} from './components/Channel';
 import {useWebRTC} from './providers/WebRTC';
 
 function App() {
