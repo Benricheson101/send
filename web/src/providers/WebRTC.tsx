@@ -13,14 +13,14 @@ const REST_URL = 'http://127.0.0.1:8000/api';
 const WSS = REST_URL + '/ws';
 
 const rtcConfig: RTCConfiguration = {
-  iceServers: [{urls: 'stun:stun.l.google.com:19302'}],
+  // iceServers: [{urls: 'stun:stun.l.google.com:19302'}],
 };
 
 type WebRTCState = {
   ws: WebSocket | null;
   sendWs(msg: unknown): void;
   connect(): Promise<void>;
-  waitForWS(pred: (msg: object) => boolean): Promise<void>;
+  waitForWS(pred: (msg: WSMessage) => boolean): Promise<void>;
   call(): Promise<void>;
   auth(code: string): Promise<void>;
 
@@ -32,17 +32,26 @@ type WebRTCState = {
   };
 };
 
-type WSMessage<Type extends string, Data> = {type: Type; data: Data};
+const enum WSMessageType {
+  Auth = 'auth',
+  Offer = 'offer',
+  Answer = 'answer',
+  ICECandidate = 'icecandidate',
+  Join = 'join',
+}
+
+type MakeWSMessage<Type extends WSMessageType, Data> = {type: Type; data: Data};
 
 // TODO: make a state machine?
-type WSMessageOutbound =
-  | WSMessage<'auth', {code: string; role: 'send' | 'recv'}>
-  | WSMessage<'offer', unknown>
-  | WSMessage<'answer', unknown>
-  | WSMessage<'icecandidate', unknown>
-  | WSMessage<'join', null>;
+type WSMessageInbound =
+  | MakeWSMessage<WSMessageType.Auth, {code: string; role: 'send' | 'recv'}>
+  | MakeWSMessage<WSMessageType.Offer, unknown>
+  | MakeWSMessage<WSMessageType.Answer, unknown>
+  | MakeWSMessage<WSMessageType.ICECandidate, unknown>
+  | MakeWSMessage<WSMessageType.Join, null>
 
-type WSMessageInbound = WSMessage<'auth', null> | WSMessageOutbound;
+type WSMessageOutbound = MakeWSMessage<WSMessageType.Auth, null>;
+type WSMessage = WSMessageInbound| WSMessageInbound;
 
 const WebRTCContext = createContext<WebRTCState>(undefined!);
 
@@ -60,7 +69,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
 
   // TODO: should this be a state?
   const waitFor = useRef<
-    {pred: (msg: object) => boolean; resolve: () => void}[]
+    {pred: (msg: WSMessage) => boolean; resolve: () => void}[]
   >([]);
 
   useEffect(() => {
@@ -178,7 +187,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
     };
   }, []);
 
-  const waitForWS = (pred: (msg: object) => boolean) => {
+  const waitForWS = (pred: (msg: WSMessage) => boolean) => {
     const [promise, resolve] = defer<void>();
     waitFor.current.push({pred, resolve});
     return promise;
@@ -195,9 +204,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
       throw new Error('RTCPeerConnection is not disconnected');
     }
 
-    // TODO: don't connect to websocket till here?
-
-    await waitForWS((m: any) => m.type === 'join');
+    await waitForWS((m: WSMessage) => m.type === 'join');
 
     const offer = await pc.current.createOffer({
       // iceRestart: true,

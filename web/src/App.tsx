@@ -26,7 +26,8 @@ function App() {
 
   return (
     <>
-      <p>isConnected: {tf(rtc.isConnected)}</p>
+      <p>ws connected: {tf(rtc.ws?.readyState ===  rtc.ws?.OPEN)}</p>
+      <p>peer connected: {tf(rtc.isConnected)}</p>
       <p>tx: {tf(rtc.dataChannels.tx)}</p>
       <p>rx: {tf(rtc.dataChannels.rx)}</p>
       <p>code: {rtc.code}</p>
