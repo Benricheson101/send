@@ -1,3 +1,4 @@
+import {defer} from '@benricheson101/util';
 import {
   createContext,
   type FC,
@@ -8,23 +9,40 @@ import {
   useState,
 } from 'react';
 
-const WSS = 'ws://localhost:8000/ws';
+const REST_URL = 'http://127.0.0.1:8000/api';
+const WSS = REST_URL + '/ws';
 
 const rtcConfig: RTCConfiguration = {
-  iceServers: [{urls: 'stun:global.turn.twilio.com:3478'}],
+  iceServers: [{urls: 'stun:stun.l.google.com:19302'}],
 };
 
 type WebRTCState = {
   ws: WebSocket | null;
   sendWs(msg: unknown): void;
   connect(): Promise<void>;
+  waitForWS(pred: (msg: object) => boolean): Promise<void>;
+  call(): Promise<void>;
+  auth(code: string): Promise<void>;
 
+  code: string | null;
   isConnected: boolean;
   dataChannels: {
     tx: RTCDataChannel | null;
     rx: RTCDataChannel | null;
   };
 };
+
+type WSMessage<Type extends string, Data> = {type: Type; data: Data};
+
+// TODO: make a state machine?
+type WSMessageOutbound =
+  | WSMessage<'auth', {code: string; role: 'send' | 'recv'}>
+  | WSMessage<'offer', unknown>
+  | WSMessage<'answer', unknown>
+  | WSMessage<'icecandidate', unknown>
+  | WSMessage<'join', null>;
+
+type WSMessageInbound = WSMessage<'auth', null> | WSMessageOutbound;
 
 const WebRTCContext = createContext<WebRTCState>(undefined!);
 
@@ -37,6 +55,13 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
   const [txdc, setTxdc] = useState<RTCDataChannel | null>(null);
   const [rxdc, setRxdc] = useState<RTCDataChannel | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  // FIXME: changing code should reset everything?
+  const [code, setCode] = useState<string | null>(null);
+
+  // TODO: should this be a state?
+  const waitFor = useRef<
+    {pred: (msg: object) => boolean; resolve: () => void}[]
+  >([]);
 
   useEffect(() => {
     pc.current = new RTCPeerConnection(rtcConfig);
@@ -55,7 +80,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
       console.log('icecandidate', event);
       if (event.candidate) {
         ws.current!.send(
-          JSON.stringify({type: 'add-ice-candidate', data: event.candidate})
+          JSON.stringify({type: 'icecandidate', data: event.candidate})
         );
       }
     });
@@ -82,6 +107,10 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
       }
     });
 
+    pc.current.addEventListener('negotiationneeded', event => {
+      console.log('negotiationneeded', event);
+    });
+
     pc.current.addEventListener('datachannel', event => {
       console.log('got remote datachannel', event.channel.label);
       setRxdc(event.channel);
@@ -96,6 +125,17 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
       console.log(_msg);
 
       const msg = JSON.parse(_msg.data);
+
+      for (const wait of waitFor.current) {
+        try {
+          if (wait.pred(msg)) {
+            wait.resolve();
+            waitFor.current.splice(waitFor.current.indexOf(wait), 1);
+          }
+        } catch (err) {
+          console.warn('error in waitFor function', err);
+        }
+      }
 
       switch (msg.type) {
         case 'offer': {
@@ -115,7 +155,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
           break;
         }
 
-        case 'add-ice-candidate': {
+        case 'icecandidate': {
           try {
             await pc.current!.addIceCandidate(msg.data);
             console.log('added ice candidate');
@@ -138,6 +178,12 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
     };
   }, []);
 
+  const waitForWS = (pred: (msg: object) => boolean) => {
+    const [promise, resolve] = defer<void>();
+    waitFor.current.push({pred, resolve});
+    return promise;
+  };
+
   const connect = async () => {
     if (!ws.current || ws.current.readyState !== ws.current.OPEN) {
       throw new Error('WebSocket is not connected');
@@ -149,8 +195,12 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
       throw new Error('RTCPeerConnection is not disconnected');
     }
 
+    // TODO: don't connect to websocket till here?
+
+    await waitForWS((m: any) => m.type === 'join');
+
     const offer = await pc.current.createOffer({
-      iceRestart: true,
+      // iceRestart: true,
     });
     await pc.current.setLocalDescription(offer);
     sendWs({type: 'offer', data: offer});
@@ -159,10 +209,38 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
   const sendWs = (msg: unknown) =>
     ws.current?.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
 
+  const createTicket = async () => {
+    const ticket = await fetch(REST_URL + '/tickets', {
+      method: 'POST',
+    }).then(r => r.json());
+
+    console.log(ticket);
+    const code: string = ticket.code;
+    return code;
+  };
+
+  const auth = async (code: string) => {
+    setCode(code);
+
+    sendWs({type: 'auth', data: {code}});
+    await waitForWS((m: any) => m.type === 'auth');
+    console.log('got auth back!');
+  };
+
+  const call = async () => {
+    const code = await createTicket();
+    await auth(code);
+    await connect();
+  };
+
   const value: WebRTCState = {
     ws: ws.current,
     sendWs,
     connect,
+    waitForWS,
+    call,
+    code,
+    auth,
     isConnected,
     dataChannels: {
       tx: txdc,
