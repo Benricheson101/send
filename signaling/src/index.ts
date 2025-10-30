@@ -47,17 +47,25 @@ server.on('upgrade', (req, socket, head) => {
   });
 });
 
-type WSMessage<Type extends string, Data> = {type: Type; data: Data};
+const enum WSMessageType {
+  Auth = 'auth',
+  Offer = 'offer',
+  Answer = 'answer',
+  ICECandidate = 'icecandidate',
+  Join = 'join',
+}
+
+type WSMessage<Type extends WSMessageType, Data> = {type: Type; data: Data};
 
 // TODO: make a state machine?
 type WSMessageInbound =
-  | WSMessage<'auth', {code: string; role: 'send' | 'recv'}>
-  | WSMessage<'offer', unknown>
-  | WSMessage<'answer', unknown>
-  | WSMessage<'icecandidate', unknown>
-  | WSMessage<'join', null>
+  | WSMessage<WSMessageType.Auth, {code: string; role: 'send' | 'recv'}>
+  | WSMessage<WSMessageType.Offer, unknown>
+  | WSMessage<WSMessageType.Answer, unknown>
+  | WSMessage<WSMessageType.ICECandidate, unknown>
+  | WSMessage<WSMessageType.Join, null>
 
-type WSMessageOutbound = WSMessage<'auth', null> | WSMessageInbound;
+type WSMessageOutbound = WSMessage<WSMessageType.Auth, null> | WSMessageInbound;
 
 // const clients: WebSocket[] = [];
 const clients = new Map<WebSocket, string | null>();
@@ -74,6 +82,24 @@ wss.on('connection', ws => {
 
   ws.on('error', console.error);
   ws.on('close', () => {
+    const code = clients.get(ws);
+    if (!code) {
+      console.info('unauthed client disconnected');
+      clients.delete(ws);
+      return;
+    }
+    console.log(code, 'client disconnected');
+
+    const ticket = tickets.get(code);
+    if (!ticket) {
+      console.log('no ticket?');
+    } else if (ticket.recv === ws) {
+      ticket.recv = undefined;
+    } else {
+      ticket.recv?.close();
+      tickets.delete(code);
+    }
+
     clients.delete(ws);
   });
 
@@ -90,7 +116,7 @@ wss.on('connection', ws => {
     }
 
     switch (msg.type) {
-      case 'auth': {
+      case WSMessageType.Auth: {
         const code = msg.data.code;
 
         if (clients.get(ws) !== null) {
@@ -109,7 +135,7 @@ wss.on('connection', ws => {
           unclaimedTickets.delete(code);
           tickets.set(code, {send: ws});
           clients.set(ws, code);
-          send('auth');
+          send(WSMessageType.Auth);
           return;
         }
 
@@ -126,15 +152,15 @@ wss.on('connection', ws => {
 
         ticket.recv = ws;
         clients.set(ws, code);
-        send('auth');
-        send('join', null, ticket.send);
+        send(WSMessageType.Auth);
+        send(WSMessageType.Join, null, ticket.send);
 
         return;
       }
 
-      case 'offer':
-      case 'answer':
-      case 'icecandidate': {
+      case WSMessageType.Offer:
+      case WSMessageType.Answer:
+      case WSMessageType.ICECandidate: {
         if (!code) {
           console.error('Invalid code for client');
           ws.close();
