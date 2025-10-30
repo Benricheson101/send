@@ -9,11 +9,19 @@ import {
   useState,
 } from 'react';
 
-const REST_URL = 'http://127.0.0.1:8000/api';
-const WSS = REST_URL + '/ws';
+// const REST_URL = 'http://127.0.0.1:8000/api';
+
+// const REST_URL = 'https://192.168.246.53:8000/api';
+
+// const REST_URL = 'https://localhost:8000/api';
+const REST_URL =
+  window.location.protocol + '//' + window.location.host + '/api';
+const WSS = REST_URL.replace('http', 'ws') + '/ws';
+
+console.log({REST_URL, WSS});
 
 const rtcConfig: RTCConfiguration = {
-  // iceServers: [{urls: 'stun:stun.l.google.com:19302'}],
+  iceServers: [{urls: 'stun:stun.l.google.com:19302'}],
 };
 
 type WebRTCState = {
@@ -24,6 +32,7 @@ type WebRTCState = {
   call(): Promise<void>;
   auth(code: string): Promise<void>;
 
+  maxMsgSize: number;
   code: string | null;
   isConnected: boolean;
   dataChannels: {
@@ -48,10 +57,10 @@ type WSMessageInbound =
   | MakeWSMessage<WSMessageType.Offer, unknown>
   | MakeWSMessage<WSMessageType.Answer, unknown>
   | MakeWSMessage<WSMessageType.ICECandidate, unknown>
-  | MakeWSMessage<WSMessageType.Join, null>
+  | MakeWSMessage<WSMessageType.Join, null>;
 
 type WSMessageOutbound = MakeWSMessage<WSMessageType.Auth, null>;
-type WSMessage = WSMessageInbound| WSMessageInbound;
+type WSMessage = WSMessageInbound | WSMessageInbound;
 
 const WebRTCContext = createContext<WebRTCState>(undefined!);
 
@@ -66,6 +75,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
   const [isConnected, setIsConnected] = useState(false);
   // FIXME: changing code should reset everything?
   const [code, setCode] = useState<string | null>(null);
+  const [maxMsgSize, setMaxMsgSize] = useState(64_000);
 
   // TODO: should this be a state?
   const waitFor = useRef<
@@ -76,7 +86,10 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
     pc.current = new RTCPeerConnection(rtcConfig);
     const _ws = new WebSocket(WSS);
 
-    const tx = pc.current.createDataChannel('data');
+    const tx = pc.current.createDataChannel('data', {
+      ordered: true,
+    });
+    tx.binaryType = 'blob';
     tx.addEventListener('open', () => {
       console.log('tx open');
     });
@@ -87,7 +100,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
 
     pc.current.addEventListener('icecandidate', async event => {
       console.log('icecandidate', event);
-      if (event.candidate) {
+      if (event.candidate && _ws.readyState === WebSocket.OPEN) {
         ws.current!.send(
           JSON.stringify({type: 'icecandidate', data: event.candidate})
         );
@@ -104,6 +117,32 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
       switch (pc.current!.connectionState) {
         case 'connected': {
           setIsConnected(true);
+          _ws.close();
+          ws.current = null;
+
+          const localMax = pc.current?.localDescription?.sdp.match(
+            /a=max-message-size:(\d+)/
+          )?.[1];
+          const remoteMax = pc.current?.remoteDescription?.sdp.match(
+            /a=max-message-size:(\d+)/
+          )?.[1];
+
+          let maxMessageSize = Math.min(Number(localMax), Number(remoteMax));
+
+          if (!localMax || !remoteMax) {
+            console.error("Couldn't negotiate max-message-size", {
+              localMax,
+              remoteMax,
+              local: pc.current?.localDescription?.sdp,
+              remote: pc.current?.remoteDescription?.sdp,
+            });
+            maxMessageSize = 64_000;
+          }
+
+          // setMaxMsgSize(maxMessageSize);
+
+          console.log('max message size:', maxMessageSize);
+
           break;
         }
 
@@ -122,12 +161,23 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
 
     pc.current.addEventListener('datachannel', event => {
       console.log('got remote datachannel', event.channel.label);
-      setRxdc(event.channel);
+      if (event.channel.label === 'data') {
+        const rx = event.channel;
+        event.channel.binaryType = 'blob';
+        setRxdc(event.channel);
+
+        rx.addEventListener('message', msg => {});
+      }
     });
 
     _ws.addEventListener('open', () => {
       console.log('websocket connected');
       ws.current = _ws;
+    });
+
+    _ws.addEventListener('close', () => {
+      console.log('WebSocket closed');
+      ws.current = null;
     });
 
     _ws.addEventListener('message', async _msg => {
@@ -177,7 +227,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
     });
 
     return () => {
-      _ws.close();
+      _ws?.close();
       ws.current = null;
 
       if (pc.current) {
@@ -209,6 +259,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
     const offer = await pc.current.createOffer({
       // iceRestart: true,
     });
+    // const localMaxMessageSize = offer.sdp?.match(/a=max-message-size:(\d+)/)?.[1];
     await pc.current.setLocalDescription(offer);
     sendWs({type: 'offer', data: offer});
   };
@@ -249,6 +300,7 @@ export const WebRTCProvider: FC<PropsWithChildren<Props>> = ({children}) => {
     code,
     auth,
     isConnected,
+    maxMsgSize,
     dataChannels: {
       tx: txdc,
       rx: rxdc,
