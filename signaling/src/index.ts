@@ -1,25 +1,16 @@
-// import './coordination';
-
-import {randomInt, randomUUID} from 'node:crypto';
+import {randomInt} from 'node:crypto';
 import {createServer} from 'node:http';
 
 import fmw from 'find-my-way';
 import {WebSocket, WebSocketServer} from 'ws';
-import {error} from 'node:console';
 
 const router = fmw();
 const wss = new WebSocketServer({noServer: true});
 
-// const tickets = new Map<string, {clients: WebSocket[]}>();
-// const tickets = new Map<string, {send?: WebSocket; recv?: WebSocket}>();
-
-// const sessions = new Map<string, string>();
-
 const unclaimedTickets = new Set();
 
-router.post('/tickets', (req, res) => {
+router.post('/tickets', (_req, res) => {
   const code = ('000000' + randomInt(1e6).toString()).slice(-6);
-  // tickets.set(code, {});
   unclaimedTickets.add(code);
 
   res
@@ -67,7 +58,6 @@ type WSMessageInbound =
 
 type WSMessageOutbound = WSMessage<WSMessageType.Auth, null> | WSMessageInbound;
 
-// const clients: WebSocket[] = [];
 const clients = new Map<WebSocket, string | null>();
 const tickets = new Map<string, {send: WebSocket; recv?: WebSocket}>();
 wss.on('connection', ws => {
@@ -181,14 +171,6 @@ wss.on('connection', ws => {
         }
 
         send(msg.type, msg.data, sendTo);
-
-        // for (const [client, _code] of clients) {
-        //   if (client === ws) {
-        //     continue;
-        //   }
-        //
-        //   client.send(data.toString());
-        // }
 
         return;
       }
