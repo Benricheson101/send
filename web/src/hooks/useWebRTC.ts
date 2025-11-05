@@ -8,7 +8,7 @@ import {
   type WSMessage,
   WSMessageType,
 } from '../util/signaling';
-import {bufferFlow} from '../util/sendFile';
+import {sendFlow} from '../util/sendFlow';
 
 const WSS = REST_URL.replace('http', 'ws') + '/ws';
 
@@ -85,12 +85,9 @@ export const useWebRTC = () => {
       if (pc.connectionState === 'connected') {
         console.log('Peer connected');
 
-        const localMax = pc.localDescription?.sdp.match(
-          /a=max-message-size:(\d+)/
-        )?.[1];
-        const remoteMax = pc.remoteDescription?.sdp.match(
-          /a=max-message-size:(\d+)/
-        )?.[1];
+        const re = /^a=max-message-size:(\d+)$/m;
+        const localMax = pc.localDescription?.sdp.match(re)?.[1];
+        const remoteMax = pc.remoteDescription?.sdp.match(re)?.[1];
 
         let maxMessageSize = Math.min(Number(localMax), Number(remoteMax));
 
@@ -169,7 +166,9 @@ export const useWebRTC = () => {
       })
     );
 
-    for await (const _ of bufferFlow(tx, chunkSize * 4)) {
+    // TODO: should there be in intermediate step here where the recvr accepts the file before it sends? this could also be used to resuume/send partial files
+
+    for await (const _ of sendFlow(tx, chunkSize * 4)) {
       if (offset >= file.size) {
         break;
       }
