@@ -9,7 +9,7 @@ import {WSTestPage} from './WS.tsx';
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     {/* <WebRTCProvider> */}
-      <App />
+    <App />
     {/* </WebRTCProvider> */}
   </StrictMode>
 );

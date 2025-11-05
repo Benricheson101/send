@@ -1,6 +1,6 @@
 import {defer} from '@benricheson101/util';
 
-export const enum WSMessageType {
+export enum WSMessageType {
   Auth = 'auth',
   Offer = 'offer',
   Answer = 'answer',
@@ -10,7 +10,7 @@ export const enum WSMessageType {
 
 type MakeWSMessage<Type extends WSMessageType, Data> = {type: Type; data: Data};
 
-export const enum PeerRole {
+export enum PeerRole {
   Send = 'send',
   Recv = 'recv',
 }

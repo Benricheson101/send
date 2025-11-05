@@ -23,7 +23,7 @@ export const Channel: FC<Props> = ({tx, rx}) => {
   const [sentFile, setSentFile] = useState<string | null>(null);
 
   useEffect(() => {
-    let msgID = 0;
+    const msgID = 0;
 
     let gotFirstMsg = false;
     const parts: Blob[] = [];

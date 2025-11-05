@@ -1,6 +1,7 @@
-import {useState, type FC} from 'react';
-import {SignalingServer} from './util/signaling';
+import {type FC, useState} from 'react';
+
 import {createTicket} from './util/rest';
+import {SignalingServer} from './util/signaling';
 
 export const WSTestPage: FC = () => {
   const [ss, setSS] = useState<SignalingServer | null>(null);

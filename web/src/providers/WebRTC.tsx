@@ -41,7 +41,7 @@ type WebRTCState = {
   };
 };
 
-const enum WSMessageType {
+enum WSMessageType {
   Auth = 'auth',
   Offer = 'offer',
   Answer = 'answer',

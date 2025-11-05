@@ -1,10 +1,11 @@
 import {defer} from '@benricheson101/util';
+
 import {createTicket, REST_URL} from './rest';
 import {
   PeerRole,
   SignalingServer,
-  WSMessageType,
   type WSMessage,
+  WSMessageType,
 } from './signaling';
 
 const WSS = REST_URL.replace('http', 'ws') + '/ws';
