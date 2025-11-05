@@ -8,6 +8,7 @@ import {
   type WSMessage,
   WSMessageType,
 } from '../util/signaling';
+import {bufferFlow} from '../util/sendFile';
 
 const WSS = REST_URL.replace('http', 'ws') + '/ws';
 
@@ -24,7 +25,7 @@ export const useWebRTC = () => {
   const [rx, setRx] = useState<RTCDataChannel | null>(null);
   const [connectionState, setConnectionState] = useState('disconnected');
   const [role, setRole] = useState<PeerRole | null>(null);
-  const [maxMsgSize, setMaxMsgSize] = useState(64_000);
+  const [_maxMsgSize, setMaxMsgSize] = useState(64_000);
 
   const connect = async (role: PeerRole, code: string) => {
     const options = {
@@ -137,7 +138,7 @@ export const useWebRTC = () => {
     }
 
     await Promise.all([connected, recvRx]);
-    console.log('peers are connected!');
+    console.log('peers are connected!', options);
 
     return {pc, tx, rx: rx!, options};
   };
@@ -148,42 +149,36 @@ export const useWebRTC = () => {
     }
 
     const {
-      pc,
       tx,
-      rx,
       options: {maxMsgSize},
     } = await connect(PeerRole.Send, code);
 
-    const nrChunks = Math.ceil(file.size / maxMsgSize);
     const chunkSize = maxMsgSize;
-    const chunks: [number, number][] = Array.from(
-      {length: nrChunks},
-      (_, i) => [i * chunkSize, (i + 1) * chunkSize]
-    );
+    const chunks = Math.ceil(file.size / chunkSize);
+    // let offset = startIndex * chunkSize;
+    let offset = 0;
 
-    const sendChunk = () => {
-      if (!chunks.length) {
-        console.log('all chunks sent!');
-        return;
-      }
-
-      tx.send(file.slice(...chunks.shift()!, file.type));
-    };
+    console.log({chunkSize, chunks, size: file.size});
 
     tx.send(
       JSON.stringify({
-        filename: file.name,
+        name: file.name,
         size: file.size,
-        chunks: nrChunks,
         type: file.type,
+        chunks,
       })
     );
 
-    // TODO: send chunks. saturate internal buffer
+    for await (const _ of bufferFlow(tx, chunkSize * 4)) {
+      if (offset >= file.size) {
+        break;
+      }
 
-    for (let i = 0; i < nrChunks; i++) {
-      console.log(`sending chunk ${i + 1}/${nrChunks}`, tx.bufferedAmount);
-      sendChunk();
+      const data = file.slice(offset, offset + chunkSize);
+      const chunk = await data.arrayBuffer();
+      offset += chunk.byteLength;
+
+      tx.send(data);
     }
   };
 
@@ -192,50 +187,14 @@ export const useWebRTC = () => {
       throw new Error('cannot recv as a sender');
     }
 
-    // const handle = window.showSaveFilePicker();
-
-    const {
-      pc,
-      tx,
-      rx,
-      options: {maxMsgSize},
-    } = await connect(PeerRole.Recv, code);
+    const {rx} = await connect(PeerRole.Recv, code);
 
     let gotHeader = false;
-    let header: {filename: string; chunks: number; size: number; type: string};
+    let header: {name: string; chunks: number; size: number; type: string};
     let chunksRecv = 0;
     const parts: Blob[] = [];
 
     const [file, doneFile] = defer<File>();
-
-    // try {
-    //   // TODO: move this to recvfile?
-    //   const picker = await window.showSaveFilePicker({
-    //     startIn: 'downloads',
-    //     suggestedName: file.name,
-    //     types: [
-    //       {
-    //         accept: {[file.type]: file.name.slice(file.name.indexOf('.'))},
-    //       },
-    //     ],
-    //   });
-    //
-    //   console.log({picker})
-    //
-    //   const writer: FileSystemWritableFileStream = await picker.createWritable();
-    //
-    //   await writer.write(file);
-    //
-    //   await writer.close();
-    // } catch (err) {
-    //   const e = document.createElement('a');
-    //   e.download = file.name;
-    //   e.href = url;
-    //   e.click();
-    // }
-
-    let handle: Promise<FileSystemFileHandle | undefined>;
-    let writer: FileSystemWritableFileStream | undefined;
 
     rx.addEventListener('message', async event => {
       console.log('got a message:', event.data);
@@ -246,50 +205,18 @@ export const useWebRTC = () => {
         header = m;
         console.log('header:', header);
 
-        // try {
-        //     handle = window.showSaveFilePicker({
-        //       startIn: 'downloads',
-        //       suggestedName: header.filename,
-        //       types: [
-        //         {
-        //           accept: {[header.type]: header.filename.slice(header.filename.indexOf('.'))},
-        //         },
-        //       ],
-        //     });
-        //
-        //     writer = await (await handle)!.createWritable();
-        //   } catch (err) {
-        //     console.warn('browser does not support showSaveFilePicker. falling back to old thing', err);
-        //     handle = Promise.resolve(undefined);
-        //   }
-
         return;
       }
 
-      // await handle;
-
       chunksRecv++;
       console.log('Got chunk', chunksRecv);
-
-      // if (writer) {
-      //   await writer.write(event.data);
-      // } else {
       parts.push(event.data);
-      // }
 
       if (header && chunksRecv === header.chunks) {
         console.log('got all chunks');
 
-        // const file = new Blob(parts, {type: header.type});
-
-        // if (writer) {
-        //   await writer.close();
-        //   doneFile();
-        // } else {
-        const file = new File(parts, header.filename, {type: header.type});
+        const file = new File(parts, header.name, {type: header.type});
         doneFile(file);
-        // }
-        // pc.close();
       }
     });
 
