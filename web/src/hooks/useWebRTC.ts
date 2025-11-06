@@ -174,8 +174,7 @@ export const useWebRTC = () => {
       }
 
       const data = file.slice(offset, offset + chunkSize);
-      const chunk = await data.arrayBuffer();
-      offset += chunk.byteLength;
+      offset += data.size;
 
       tx.send(data);
     }

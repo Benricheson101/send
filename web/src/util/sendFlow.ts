@@ -9,23 +9,12 @@ export async function* sendFlow(
 ) {
   dc.bufferedAmountLowThreshold = threshold;
 
-  let _r: ((arg0: unknown) => void) | undefined = undefined;
-
-  try {
-    while (true) {
-      if (dc.bufferedAmount <= threshold) {
-        yield;
-      } else {
-        await new Promise(r =>
-          dc.addEventListener('bufferedamountlow', (_r = r), {once: true})
-        );
-        _r = undefined;
-        yield;
-      }
+  while (true) {
+    if (dc.bufferedAmount > threshold) {
+      await new Promise(r =>
+        dc.addEventListener('bufferedamountlow', r, {once: true})
+      );
     }
-  } finally {
-    if (_r) {
-      dc.removeEventListener('bufferedamountlow', _r);
-    }
+    yield;
   }
 }
